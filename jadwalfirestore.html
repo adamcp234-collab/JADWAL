@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Perencanaan Jadwal Kerja - Cloud Sync</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .shift-P { background-color: #3b82f6; color: white; }
+        .shift-S { background-color: #22c55e; color: white; }
+        .shift-M { background-color: #a855f7; color: white; }
+        .shift-X, .shift-O { background-color: #1f2937; color: white; } /* X/O as Off */
+        .shift-C { background-color: #f59e0b; color: white; }
+        .is-weekend { background-color: #fee2e2 !important; color: #b91c1c !important; }
+        .is-holiday { background-color: #fef2f2 !important; box-shadow: inset 0 0 0 2px #ef4444 !important; }
+        .prev-month-cell { background-color: #f1f5f9 !important; opacity: 0.6; pointer-events: none; }
+        table { border-collapse: separate; border-spacing: 0; }
+        th, td { border: 1px solid #e5e7eb; }
+        .sticky-col { position: sticky; left: 0; background: white; z-index: 20; }
+        .shadow-right { box-shadow: 4px 0 6px -1px rgba(0,0,0,0.1); }
+        input[type="month"]::-webkit-calendar-picker-indicator { filter: invert(1); cursor: pointer; }
+        .loading-overlay { position: fixed; inset: 0; background: rgba(255,255,255,0.8); display: none; place-items: center; z-index: 100; }
+    </style>
+</head>
+<body class="bg-gray-100 p-2 md:p-8">
+
+    <div id="loading" class="loading-overlay">
+        <div class="flex flex-col items-center gap-4">
+            <div class="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent"></div>
+            <p class="font-bold text-blue-900 uppercase text-xs">Sinkronisasi Cloud...</p>
+        </div>
+    </div>
+
+    <div class="max-w-full mx-auto bg-white rounded-xl shadow-2xl overflow-hidden border border-slate-200">
+        <!-- Header -->
+        <div class="bg-slate-900 p-6 text-white flex flex-col md:flex-row justify-between items-center gap-6">
+            <div class="flex items-center gap-4">
+                <div class="p-3 bg-blue-600 rounded-lg shadow-lg">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-2xl font-black uppercase tracking-tighter">FIX JADWAL BULANAN</h1>
+                    <div id="syncStatus" class="flex items-center gap-2 text-slate-400 text-[10px] uppercase font-bold tracking-widest mt-1">
+                        <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> Data Tersinkron
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-2 bg-slate-800 p-2 rounded-xl border border-slate-700 shadow-inner">
+                <button onclick="changeMonth(-1)" class="p-2 hover:bg-slate-700 rounded-lg transition-all text-white">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd" /></svg>
+                </button>
+                <input type="month" id="monthInput" class="bg-transparent border-none text-white font-bold focus:ring-0 cursor-pointer text-center outline-none" value="2026-04">
+                <button onclick="changeMonth(1)" class="p-2 hover:bg-slate-700 rounded-lg transition-all text-white">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd" /></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Legend -->
+        <div class="px-6 py-4 border-b bg-white flex flex-wrap gap-6 items-center justify-between text-xs">
+            <div class="flex flex-wrap gap-4 font-bold uppercase tracking-tighter">
+                <span class="flex items-center gap-2"><span class="w-5 h-5 shift-P rounded shadow flex items-center justify-center">P</span> Pagi</span>
+                <span class="flex items-center gap-2"><span class="w-5 h-5 shift-S rounded shadow flex items-center justify-center">S</span> Siang</span>
+                <span class="flex items-center gap-2"><span class="w-5 h-5 shift-M rounded shadow flex items-center justify-center">M</span> Malam</span>
+                <span class="flex items-center gap-2"><span class="w-5 h-5 shift-X rounded shadow flex items-center justify-center">O</span> Off</span>
+                <span class="flex items-center gap-2"><span class="w-5 h-5 shift-C rounded shadow flex items-center justify-center">C</span> Cuti</span>
+            </div>
+            <div class="text-[10px] text-slate-500 font-medium">Klik kanan tanggal untuk set Libur | Klik sel untuk ganti Shift</div>
+        </div>
+
+        <!-- Table -->
+        <div class="overflow-x-auto relative">
+            <table id="scheduleTable" class="w-full text-center text-[10px] border-collapse select-none">
+                <thead id="tableHead" class="bg-slate-50 uppercase text-slate-600 font-bold border-b-2 border-slate-200"></thead>
+                <tbody id="tableBody"></tbody>
+                <tfoot id="tableFoot" class="border-t-2 border-slate-200"></tfoot>
+            </table>
+        </div>
+
+        <!-- Summary -->
+        <div class="p-6 bg-slate-50 border-t">
+            <div id="summaryCards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4"></div>
+        </div>
+    </div>
+
+    <script>
+        // CONFIG & INITIAL DATA
+        const karyawanList = [
+            "SAIFUL FAUZI", 
+            "ACHMAD TAUFIQ", 
+            "IWAN SETIAWAN", 
+            "DIA ABDILLAH", 
+            "ADAM CHABRINI PRAKOSO"
+        ];
+        const shiftOptions = ["P", "S", "M", "O", "C"];
+
+        // Data April 2026 based on uploaded image
+        const dataApril2026 = {
+            "SAIFUL FAUZI": ["M", "C", "O", "O", "O", "P", "P", "P", "P", "P", "O", "S", "M", "M", "M", "O", "O", "S", "S", "S", "M", "M", "O", "O", "S", "S", "S", "S", "S", "O"],
+            "ACHMAD TAUFIQ": ["O", "M", "M", "M", "M", "O", "O", "P", "S", "S", "S", "O", "S", "S", "S", "S", "S", "O", "O", "P", "P", "P", "O", "P", "P", "P", "M", "M", "O", "S"],
+            "IWAN SETIAWAN": ["S", "S", "O", "S", "S", "M", "O", "O", "M", "M", "M", "M", "O", "O", "P", "P", "P", "P", "P", "O", "O", "S", "S", "S", "M", "M", "O", "O", "P", "P"],
+            "DIA ABDILLAH": ["S", "O", "P", "P", "C", "C", "S", "S", "S", "S", "O", "O", "P", "P", "M", "M", "O", "O", "S", "S", "S", "M", "M", "O", "O", "P", "P", "M", "M", "M"],
+            "ADAM CHABRINI PRAKOSO": ["P", "P", "S", "O", "P", "S", "M", "M", "O", "O", "P", "P", "P", "S", "O", "S", "S", "M", "M", "M", "O", "O", "P", "P", "P", "O", "O", "S", "S", "S"]
+        };
+
+        // FIREBASE SETUP
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore(app);
+        const auth = firebase.auth(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-scheduler';
+
+        let appState = {};
+        let currentUser = null;
+
+        const monthInput = document.getElementById('monthInput');
+        const loader = document.getElementById('loading');
+
+        async function initApp() {
+            loader.style.display = 'grid';
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await auth.signInWithCustomToken(__initial_auth_token);
+                } else {
+                    await auth.signInAnonymously();
+                }
+                currentUser = auth.currentUser;
+                loadData();
+            } catch (err) {
+                console.error(err);
+                renderTable(); // Fallback to local
+            } finally {
+                loader.style.display = 'none';
+            }
+        }
+
+        function loadData() {
+            if (!currentUser) return;
+            const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('shift_data').doc('master');
+            
+            docRef.onSnapshot((doc) => {
+                if (doc.exists) {
+                    appState = doc.data();
+                }
+                // Pre-fill April 2026 if empty
+                if (!appState["2026-04"]) {
+                    appState["2026-04"] = { shifts: dataApril2026, holidays: [3, 4, 5, 11, 12, 18, 19, 25, 26] };
+                }
+                renderTable();
+            }, (error) => {
+                console.error("Firestore Error:", error);
+            });
+        }
+
+        async function saveData() {
+            if (!currentUser) return;
+            document.getElementById('syncStatus').innerHTML = `<span class="w-2 h-2 rounded-full bg-yellow-500 animate-ping"></span> Menyimpan...`;
+            try {
+                await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('shift_data').doc('master').set(appState);
+                document.getElementById('syncStatus').innerHTML = `<span class="w-2 h-2 rounded-full bg-green-500"></span> Data Tersinkron`;
+            } catch (err) {
+                document.getElementById('syncStatus').innerHTML = `<span class="w-2 h-2 rounded-full bg-red-500"></span> Gagal Simpan`;
+            }
+        }
+
+        // UI LOGIC
+        function changeMonth(delta) {
+            const [year, month] = monthInput.value.split('-').map(Number);
+            const date = new Date(year, month - 1 + delta, 1);
+            monthInput.value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+            renderTable();
+        }
+
+        function getDaysInMonth(year, month) { return new Date(year, month, 0).getDate(); }
+        function getDayName(year, month, day) { return ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'][new Date(year, month - 1, day).getDay()]; }
+
+        function renderTable() {
+            const key = monthInput.value;
+            const [y, m] = key.split('-').map(Number);
+            const days = getDaysInMonth(y, m);
+            
+            if (!appState[key]) {
+                appState[key] = { shifts: {}, holidays: [] };
+                karyawanList.forEach(n => appState[key].shifts[n] = Array(days).fill("O"));
+            }
+
+            const currentData = appState[key];
+            const py = m === 1 ? y - 1 : y;
+            const pm = m === 1 ? 12 : m - 1;
+            const prevKey = `${py}-${String(pm).padStart(2, '0')}`;
+            const prevDays = getDaysInMonth(py, pm);
+
+            // Headers
+            let h1 = `<tr><th rowspan="2" class="p-3 bg-slate-200 sticky-col shadow-right z-30 min-w-[150px]">NAMA</th>`;
+            let h2 = `<tr>`;
+            
+            // 7 Days Prev Reference
+            for (let d = prevDays - 6; d <= prevDays; d++) {
+                h1 += `<th class="p-1 border-b-0 bg-slate-100 text-slate-400 font-normal text-[8px]">${getDayName(py, pm, d)}</th>`;
+                h2 += `<th class="p-1 border-t-0 text-[8px] bg-slate-100 text-slate-400 font-normal">${d}</th>`;
+            }
+
+            // Current Month
+            for (let d = 1; d <= days; d++) {
+                const dn = getDayName(y, m, d);
+                const isW = (dn === 'Min' || dn === 'Sab');
+                const isH = currentData.holidays.includes(d);
+                const cls = `${isW ? 'is-weekend' : ''} ${isH ? 'is-holiday' : ''}`;
+                const bdr = d === 1 ? 'border-l-4 border-l-slate-800' : '';
+                h1 += `<th oncontextmenu="toggleHoliday(event, ${d})" class="p-2 min-w-[32px] border-b-0 cursor-pointer ${cls} ${bdr}">${dn}</th>`;
+                h2 += `<th oncontextmenu="toggleHoliday(event, ${d})" class="p-1 border-t-0 text-[9px] cursor-pointer ${cls} ${bdr}">${d}</th>`;
+            }
+            
+            shiftOptions.forEach(s => h1 += `<th rowspan="2" class="p-1 bg-slate-50 text-[8px] w-8 border-l">${s}</th>`);
+            h1 += `<th rowspan="2" class="p-1 bg-slate-900 text-white text-[8px] w-10">JHK</th></tr><tr></tr>`;
+            document.getElementById('tableHead').innerHTML = h1;
+
+            // Body
+            let bodyHtml = "";
+            karyawanList.forEach(name => {
+                let row = `<tr><td class="p-2 text-left font-bold sticky-col bg-white shadow-right border-r-2">${name}</td>`;
+                
+                // Prev
+                for (let d = prevDays - 6; d <= prevDays; d++) {
+                    const s = (appState[prevKey] && appState[prevKey].shifts[name]) ? appState[prevKey].shifts[name][d-1] : '-';
+                    row += `<td class="p-0 border prev-month-cell"><div class="h-8 flex items-center justify-center font-bold">${s}</div></td>`;
+                }
+
+                // Current
+                let st = { P: 0, S: 0, M: 0, O: 0, C: 0 };
+                currentData.shifts[name].forEach((s, i) => {
+                    st[s]++;
+                    const dn = getDayName(y, m, i + 1);
+                    const isW = (dn === 'Min' || dn === 'Sab');
+                    const isH = currentData.holidays.includes(i + 1);
+                    const bdr = i === 0 ? 'border-l-4 border-l-slate-800' : '';
+                    row += `<td onclick="cycleShift('${name}', ${i})" class="p-0 border cursor-pointer ${isW || isH ? 'bg-red-50/30' : ''} ${bdr}">
+                        <div class="h-8 flex items-center justify-center font-bold shift-${s}">${s}</div>
+                    </td>`;
+                });
+
+                shiftOptions.forEach(s => row += `<td class="font-bold text-slate-400 bg-slate-50 border-l">${st[s]}</td>`);
+                row += `<td class="font-black bg-blue-50 text-blue-900 border-l-2">${st.P + st.S + st.M}</td></tr>`;
+                bodyHtml += row;
+            });
+            document.getElementById('tableBody').innerHTML = bodyHtml;
+
+            // Footer (Totals)
+            let footerHtml = "";
+            shiftOptions.forEach(s => {
+                let row = `<tr><td class="p-2 text-right pr-4 sticky-col shadow-right bg-slate-100 border-r-2 text-[8px] font-bold">TOTAL ${s}</td>`;
+                for (let i = 0; i < 7; i++) row += `<td class="bg-slate-50"></td>`;
+                for (let i = 0; i < days; i++) {
+                    let count = 0;
+                    karyawanList.forEach(n => { if (currentData.shifts[n][i] === s) count++; });
+                    const isH = currentData.holidays.includes(i + 1);
+                    row += `<td class="p-1 border ${isH ? 'bg-red-50' : 'bg-white'} font-black ${i === 0 ? 'border-l-4 border-l-slate-800' : ''}">${count}</td>`;
+                }
+                row += `<td colspan="${shiftOptions.length + 1}" class="bg-slate-50"></td></tr>`;
+                footerHtml += row;
+            });
+            document.getElementById('tableFoot').innerHTML = footerHtml;
+
+            renderSummary(currentData);
+        }
+
+        function cycleShift(name, idx) {
+            const key = monthInput.value;
+            const current = appState[key].shifts[name][idx];
+            const nextIdx = (shiftOptions.indexOf(current) + 1) % shiftOptions.length;
+            appState[key].shifts[name][idx] = shiftOptions[nextIdx];
+            renderTable();
+            saveData();
+        }
+
+        function toggleHoliday(e, day) {
+            e.preventDefault();
+            const key = monthInput.value;
+            const idx = appState[key].holidays.indexOf(day);
+            if (idx > -1) appState[key].holidays.splice(idx, 1);
+            else appState[key].holidays.push(day);
+            renderTable();
+            saveData();
+        }
+
+        function renderSummary(data) {
+            let html = "";
+            karyawanList.forEach(name => {
+                let s = { P: 0, S: 0, M: 0, O: 0, C: 0 };
+                data.shifts[name].forEach(v => s[v]++);
+                html += `
+                    <div class="bg-white p-3 rounded-lg border shadow-sm">
+                        <p class="font-black text-[9px] text-slate-800 truncate mb-2">${name}</p>
+                        <div class="flex gap-2">
+                            <span class="text-[9px] bg-blue-600 text-white px-2 py-0.5 rounded font-bold">JHK: ${s.P+s.S+s.M}</span>
+                        </div>
+                    </div>`;
+            });
+            document.getElementById('summaryCards').innerHTML = html;
+        }
+
+        monthInput.addEventListener('change', renderTable);
+        window.onload = initApp;
+    </script>
+</body>
+</html>
